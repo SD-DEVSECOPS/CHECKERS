@@ -474,16 +474,37 @@ class SDQLi:
         print("="*70)
 
 def main():
-    parser = argparse.ArgumentParser(description='SD-QLi v1.1 - Advanced SQLi Tool')
-    parser.add_argument('-u', '--url', required=True, help='Target URL')
+    parser = argparse.ArgumentParser(description='SD-QLi v1.4 - Professional Automated SQLi Scanner')
+    parser.add_argument('-u', '--url', help='Target URL')
     parser.add_argument('-m', '--method', default='GET', choices=['GET', 'POST'], help='HTTP Method')
     parser.add_argument('-d', '--data', help='POST data (e.g. "id=1&user=admin")')
+    parser.add_argument('-r', '--request', help='Raw request file (Burp-style)')
     parser.add_argument('-w', '--workers', type=int, default=10, help='Number of threads')
     parser.add_argument('-t', '--timeout', type=int, default=3, help='Request timeout')
     
     args = parser.parse_args()
     
-    scanner = SDQLi(args.url, method=args.method, data=args.data, workers=args.workers, timeout=args.timeout)
+    headers = None
+    url = args.url
+    method = args.method
+    data = args.data
+    
+    if args.request:
+        print(f"[*] Parsing request file: {Colors.CYAN}{args.request}{Colors.END}")
+        req_info = SDQLi.parse_request_file(args.request)
+        if req_info:
+            url = req_info['url']
+            method = req_info['method']
+            data = req_info['data']
+            headers = req_info['headers']
+        else:
+            sys.exit(1)
+            
+    if not url:
+        parser.print_help()
+        sys.exit(1)
+    
+    scanner = SDQLi(url, method=method, data=data, headers=headers, workers=args.workers, timeout=args.timeout)
     try:
         scanner.run()
     except KeyboardInterrupt:
