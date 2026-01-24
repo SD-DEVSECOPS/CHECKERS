@@ -234,6 +234,9 @@ class LFILLER:
 
     def scan_parameter(self, param):
         """Threaded scan for a single parameter"""
+        # Simple heartbeat to show activity
+        sys.stdout.write(f" [.] Scanning: {param}\r")
+        sys.stdout.flush()
         found_on_param = False
         for base_payload in self.lfi_payloads_base:
             if found_on_param: break
@@ -709,6 +712,17 @@ class LFILLER:
     def run(self):
         self._print_banner()
         print(f"[*] Target: {Colors.BOLD}{self.url}{Colors.END}")
+        
+        # Immediate Connectivity Check
+        try:
+            print(f"[*] Checking connectivity...", end='\r')
+            self.session.get(self.url, timeout=self.timeout)
+            print(f"[*] Connectivity: {Colors.GREEN}ONLINE{Colors.END}     ")
+        except Exception as e:
+            print(f"\n{Colors.RED}[!] CONNECTION FAILED: {e}{Colors.END}")
+            print(f"    Check your URL/IP and try again.")
+            return
+
         if self.session.cookies: print(f"[*] Cookies: {Colors.YELLOW}{len(self.session.cookies)} Active{Colors.END}")
         print(f"[*] Threads: {self.max_workers} | Encoding: {self.encode_mode}")
         print("-" * 70)
